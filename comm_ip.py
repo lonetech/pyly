@@ -3,10 +3,11 @@
 #qpy:console
 
 import socket, struct
+import lytro
 
 magic = 0xfaaa55af
 
-class IpTarget:
+class IpTarget(lytro.Target):
     def __init__(self, address):
         self.s = socket.create_connection(address)
         self.s.settimeout(5)

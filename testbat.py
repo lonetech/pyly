@@ -4,9 +4,11 @@
 
 #print "This is console module"
 
-import socket, struct, time
+import struct, time
+from typing import Dict, Optional, Callable, Any
+import lytro
 
-LytroResponses={}
+LytroResponses: Dict[int, Callable[[Any, bytes], Any]] = {}
 class LytroPacket(object):
   headerstruct="<IIIH"
   paramsstruct="14x"
@@ -14,15 +16,19 @@ class LytroPacket(object):
   magic=0xfaaa55af
   length=0
   flags=0
+  payload=b''
   def send(self, s):
     packet=struct.pack('Bx'+self.paramsstruct, 
     	      self.command, *self.params)
-    if self.length and not self.flags&1:
-      data=self.payload.ljust(self.length,'\0')
+    if not self.flags&1:
+      data=self.payload.ljust(self.length,b'\0')
+      print("Write command: %r %r"%(packet, data))
       s.write(packet, data)
     else:
+      print("Read command: %r %r"%(packet, self.length))
       response=s.read(packet, self.length)
-      return self.read(self.command, packet[2:], response)
+      if self.length and response:
+        return self.read(self.command, packet[2:], response)
   @classmethod
   def read(self, command, params, payload):
     #headersize=struct.calcsize(self.headerstruct)
@@ -41,8 +47,8 @@ class LytroPacket(object):
 #    print "Rest", repr(s.recv(4096))
     try:
       return LytroResponses[command](params,payload)
-    except KeyError, e:
-      print "Unknown packet: ", repr((header,params,payload))
+    except KeyError as e:
+      print("Unknown packet: ", repr((header,params,payload)))
 class LytroQuery(LytroPacket):
   flags=1
   command=0xc6
@@ -82,13 +88,15 @@ class LytroLoad(LytroPacket):
       self.payload=path
       self.length=len(path)+1
 class LytroDownload(LytroPacket):
+  # TODO: Figure out why this fails over SCSI transport. 
   flags=1
   length=2048
   command=0xc4
-  paramsstruct="BI9x"
-  def __init__(self):
-    self.params=[0,0]
-    self.data=""
+  paramsstruct="BI8x"
+  def __init__(self, length=2048):
+    self.params=[1,0]
+    self.data=b""
+    self.length = length
   @property
   def offset(self):
     return self.params[1]
@@ -104,7 +112,7 @@ class LytroDownload(LytroPacket):
   def receiveddata(self, params, payload):
     self.data+=payload
     #self.offset+=len(payload)
-    print "Got data: ", len(payload), repr(payload)
+    print("Got data: ", len(payload), repr(payload))
 
 #def recv(s):
 #  try:
@@ -116,37 +124,44 @@ class LytroDownload(LytroPacket):
 #    print e
 #    time.sleep(0.2)
 
-target = None
-import comm_sg
-for dev in comm_sg.probe():
-  target = comm_sg.ScsiTarget(dev)
+target: Optional[lytro.Target] = None
+
+import comm_usb
+if not target:
+  for dev in comm_usb.probe():
+    target = comm_usb.UsbTarget(dev)
+
 import comm_ip
 if not target:
   for addr in comm_ip.probe():
     target = comm_ip.IpTarget(addr)
 
-#print "Sending:", len(askbat), repr(askbat)
-#s.send(askbat)
+# SG transport fails at download.
+#import comm_sg
+#if not target:
+#  for dev in comm_sg.probe():
+#    target = comm_sg.ScsiTarget(dev)
+
 from sys import argv
 if len(argv)>=2:
   kind=int(argv[1])
   LytroLoad(kind, *argv[2:3]).send(target)
-  recv(target)   # no reply?
-  LytroQuery(0).send(target)
-  p=recv(target)
+  #recv(target)   # no reply?
+  p=LytroQuery(0).send(target)
+  #p=recv(target)
   end=p.dllength
-  dl=LytroDownload()
+  print("Download for kind {} is {} bytes".format(kind,end))
+  dl=LytroDownload(length=end)
   while len(dl.data)<end:
     dl.send(target)
-    recv(target)
-    print len(dl.data)
+    #recv(target)
+    print(len(dl.data))
   if len(argv)>=4:
     open(argv[3],"wb").write(dl.data)
   else:
-    print repr(dl.data)
+    print(repr(dl.data))
 else:
   while True:
     time.sleep(3)
     for kind in 6,3,0:
-      print LytroQuery(kind).send(target)
-
+      print(LytroQuery(kind).send(target))
