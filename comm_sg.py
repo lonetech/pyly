@@ -40,11 +40,9 @@ class sg_io_hdr(Structure):
 class ScsiTarget(lytro.Target):
     sb_len = 0
     def __init__(self, name):
-        self.fd = posix.open(name, posix.O_RDWR | posix.O_NONBLOCK)
+        self.fd = posix.open(name, posix.O_RDWR)
         self.sb = create_string_buffer(self.sb_len)
     def read(self, command, size):
-        if size>2048:
-            size=65536
         buf = create_string_buffer(size)
         #print "Buffer size: ", len(buf)
         hdr = sg_io_hdr(interface_id=ord('S'), timeout=1000,
@@ -66,7 +64,13 @@ class ScsiTarget(lytro.Target):
     
 
 def probe():
-    return glob.glob('/dev/disk/by-id/usb-Lytro*')
+    # FIXME identify Lytro SG device!
+    import os, pathlib
+    for path in glob.glob('/sys/class/scsi_generic/sg?/device/vendor'):
+        if open(path).read() == 'Lytro   \n':
+            yield "/dev/"+pathlib.Path(path).parts[-3]
+    # CD-ROM device works for battery status, but not downloads
+    #return glob.glob('/dev/disk/by-id/usb-Lytro*')
 
 if __name__=='__main__':
     getbat=struct.pack('<HB13x', 0xc6, 6)
