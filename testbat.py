@@ -126,21 +126,25 @@ class LytroDownload(LytroPacket):
 
 target: Optional[lytro.Target] = None
 
+# SG transport fails at download.
+import comm_sg
+if not target:
+  for dev in comm_sg.probe():
+    print(f"Opening SCSI device {dev}")
+    target = comm_sg.ScsiTarget(dev)
+
 import comm_usb
 if not target:
   for dev in comm_usb.probe():
+    print(f"Opening USB device {dev}")
     target = comm_usb.UsbTarget(dev)
 
 import comm_ip
 if not target:
   for addr in comm_ip.probe():
+    print(f"Connecting to IP device {addr}")
     target = comm_ip.IpTarget(addr)
 
-# SG transport fails at download.
-#import comm_sg
-#if not target:
-#  for dev in comm_sg.probe():
-#    target = comm_sg.ScsiTarget(dev)
 
 from sys import argv
 if len(argv)>=2:
