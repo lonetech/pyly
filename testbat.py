@@ -149,7 +149,7 @@ if not target:
 from sys import argv
 if len(argv)>=2:
   kind=int(argv[1])
-  LytroLoad(kind, *argv[2:3]).send(target)
+  LytroLoad(kind, *[a.encode('ascii') for a in argv[2:3]]).send(target)
   #recv(target)   # no reply?
   p=LytroQuery(0).send(target)
   #p=recv(target)
