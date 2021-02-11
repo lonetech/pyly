@@ -1,7 +1,6 @@
 # Thumbnails are 128x128, 16 bits per pixel.
 # Guessed YUYV, aka interleaved YUV 4:2:2.
 
-from array import array
 from PIL import Image
 
 def decode_tn128(data):
@@ -23,9 +22,11 @@ def decode_tn128(data):
     return img
 
 if __name__ == '__main__':
-    from sys import argv
-    for name in argv[1:]:
-        data = open(name, 'rb').read()
-        img = decode_tn128(data)
-        img.show()
+    def main():
+        from sys import argv
+        for name in argv[1:]:
+            data = open(name, 'rb').read()
+            img = decode_tn128(data)
+            img.show()
 
+    main()
