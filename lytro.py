@@ -1,4 +1,5 @@
 import datetime
+import dateutil.parser
 import struct
 
 # Protocol references:
@@ -82,7 +83,7 @@ class LytroQueryTime(LytroQuery):
         self.payload = payload
     def datetime(self):
         dt = self.unpack()
-        return datetime.datetime(*dt[:-1], microsecond=dt[-1]*1000)
+        return datetime.datetime(*dt[:-1], microsecond=dt[-1]*1000, tzinfo=datetime.timezone.utc)
 LytroQueries[LytroQueryTime.query] = LytroQueryTime
 
 class LytroQuerySize(LytroQuery):
@@ -106,7 +107,7 @@ class LytroLoad(LytroPacket):
         # pictures should be suffixed with a format digit: jpg,raw,txt,128,stk
         self.params=(sort,)
         if path is not None:
-            self.payload=path
+            self.payload=path.encode('ascii')+b'\0'
             self.length=len(path)+1  # NUL termination
 
 class LytroDownload(LytroPacket):
@@ -149,17 +150,20 @@ class PictureRecord:
     size = struct.calcsize(structstring)
     def __init__(self, b):
         f = struct.unpack(self.structstring, b)
-        self.folderpostfix  = f[0].rstrip(b'\0')
-        self.filenameprefix = f[1].rstrip(b'\0')
+        self.folderpostfix  = f[0].rstrip(b'\0').decode('ascii')
+        self.filenameprefix = f[1].rstrip(b'\0').decode('ascii')
         self.folder         = f[2]
         self.file           = f[3]
         self.starred        = f[4]
         self.focus          = f[5]
-        self.id             = f[6].rstrip(b'\0')
-        self.datetime       = datetime.datetime.fromisoformat(f[7].rstrip(b'\0')
-                                                              .decode('ascii').rstrip('Z'))
+        self.id             = f[6].rstrip(b'\0').decode('ascii')
+        self.datetime       = dateutil.parser.isoparse(f[7].rstrip(b'\0').decode('ascii'))
         self.rotation       = {1:0, 8:90, 3:180, 6:270}[f[8]]
-        print(self.__dict__)
+        #print(self.__dict__)
+    def pathname(self, extension=b"RAW"):
+        "Return an internal filename in Lytro F01, usable with file download. Not needed since picture download works with id (hash)."
+        # Basic problem: formatting is for strings, and we have a lot of bytes. Simple solution: decode and encode. 
+        return rf"I:\DCIM\{self.folder:03}{self.folderpostfix}\{self.filenameprefix}{self.file:04}.{extension}"
 class PictureList(list):
     downloadtype='picture_list'
     def __init__(self, b):
@@ -173,8 +177,7 @@ class PictureList(list):
             for o in range(12, 12+8*recordsperitem, 8)
         }
         #print(itemrecords)
-        # I'm really not sure what these record things are. The picture records are
-        # definitely a distinct thing. 
+        # Need a better concept of what the item records mean.
         self.extend(
             #{index*0:
             PictureRecord(b[base:base+PictureRecord.size])
@@ -189,7 +192,11 @@ class Lytro:
         return LytroQueryBattery().send(self.comm).percent()
     def gettime(self):
         return LytroQueryTime().send(self.comm).datetime()
-    def download(self, loadtype, name=None):
+    def settime(self, time=None):
+        LytroSetTime(datetime.datetime.utcnow() if time is None else time.astimezone(datetime.timezone.utc))
+    def download(self, loadtype, name=None, subtype=None):
+        if loadtype=='picture' and subtype is not None:
+            name += chr(picturesubtypes.index(subtype)).encode('ascii')
         load = LytroLoad(loadtypes[loadtype], name)
         load.send(self.comm)
         size = LytroQuerySize().send(self.comm).size()
@@ -197,6 +204,7 @@ class Lytro:
             raise FileNotFoundError(name)
         dl = LytroDownload(size)
         dl.send(self.comm)
+        print(f"Download: got {len(dl.data)}/{size} bytes")
         return dl.data
     def gethardwareinfo(self):
         data = self.download('hardware_info')
@@ -206,24 +214,34 @@ class Lytro:
         return PictureList(data)
 
 def connect(verbose=True):
-    import comm_sg
+    import traceback
     target: Optional[lytro.Target] = None
 
-    if not target:
-        for dev in comm_sg.probe():
-            if verbose: print(f"Opening SCSI device {dev}")
-            target = comm_sg.ScsiTarget(dev)
+    try:
+        if not target:
+            import comm_sg
+            for dev in comm_sg.probe():
+                if verbose: print(f"Opening SCSI device {dev}")
+                target = comm_sg.ScsiTarget(dev)
+    except:
+        traceback.print_exc()
 
-    import comm_usb
-    if not target:
-        for dev in comm_usb.probe():
-            if verbose: print(f"Opening USB device {dev}")
-            target = comm_usb.UsbTarget(dev)
+    try:
+        if not target:
+            import comm_usb
+            for dev in comm_usb.probe():
+                if verbose: print(f"Opening USB device {dev}")
+                target = comm_usb.UsbTarget(dev)
+    except:
+        traceback.print_exc()
 
-    import comm_ip
-    if not target:
-        for addr in comm_ip.probe():
-            if verbose: print(f"Connecting to IP device {addr}")
-            target = comm_ip.IpTarget(addr)
+    try:
+        if not target:
+            import comm_ip
+            for addr in comm_ip.probe():
+                if verbose: print(f"Connecting to IP device {addr}")
+                target = comm_ip.IpTarget(addr)
+    except:
+        traceback.print_exc()
 
     return Lytro(target)

@@ -9,7 +9,7 @@ def decode_tn128(data):
     if len(data)%2:
         assert data[-1]==0
         data = data[:-1]
-        w,h=128,128
+    w,h=128,128
 
     img = Image.new('YCbCr', (w,h))
     for y in range(h):

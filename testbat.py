@@ -18,7 +18,13 @@ if __name__=='__main__':
     print(f"Camera time: {dt}")
     info = dev.gethardwareinfo()
     print(info)
-    print(dev.getpicturelist())
+    pictures = dev.getpicturelist()
+    print(pictures)
+    #thumbnail = dev.download('picture', pictures[32].id, '128')
+    thumbnail = dev.download('file', pictures[32].pathname('128'))
+    import tn128
+    tn128.decode_tn128(thumbnail).show()
+    
 
 '''
     if len(argv)>=2:
