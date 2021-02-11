@@ -97,6 +97,19 @@ class LytroQuerySize(LytroQuery):
         return self.unpack()[0]
 LytroQueries[LytroQuerySize.query] = LytroQuerySize
 
+class LytroSetTime(LytroPacket):
+    # FIXME does not yet work. On the plus side, doesn't crash camera either.
+    flags = 0
+    command = 0xc0
+    params = (4,)
+    paramsstruct = "B13x",
+    def __init__(self, time):
+        time = time.astimezone(datetime.timezone.utc)
+        self.payload = struct.pack('<7H',
+                                   time.year, time.month, time.day,
+                                   time.hour, time.minute, time.second,
+                                   time.microsecond//1000)
+
 LytroResponses: Dict[int, Callable[[Any, bytes], Any]] = {}
 LytroResponses[LytroQuery.command]=LytroQuery.response
 class LytroLoad(LytroPacket):
@@ -133,8 +146,8 @@ class LytroDownload(LytroPacket):
         #self.offset+=self.xferlength
         return ret
     def receiveddata(self, params, payload):
-        self.data+=payload
-        self.offset+=len(payload)
+        self.data = payload
+        self.offset += len(payload)
         #print(f"Got {len(payload)} bytes: {payload!r}")
 
 # Hardware info
@@ -194,18 +207,30 @@ class Lytro:
         return LytroQueryTime().send(self.comm).datetime()
     def settime(self, time=None):
         LytroSetTime(datetime.datetime.utcnow() if time is None else time.astimezone(datetime.timezone.utc))
-    def download(self, loadtype, name=None, subtype=None):
+    def download(self, loadtype, name=None, subtype=None, verbose=True):
         if loadtype=='picture' and subtype is not None:
-            name += chr(picturesubtypes.index(subtype)).encode('ascii')
+            name += chr(picturesubtypes.index(subtype))
         load = LytroLoad(loadtypes[loadtype], name)
         load.send(self.comm)
         size = LytroQuerySize().send(self.comm).size()
         if size==0:
             raise FileNotFoundError(name)
         dl = LytroDownload(size)
-        dl.send(self.comm)
-        print(f"Download: got {len(dl.data)}/{size} bytes")
-        return dl.data
+        received = 0
+        data = []
+        while received < size:
+            dl.offset = received
+            dl.send(self.comm)
+
+            assert len(dl.data)>0
+            data.append(dl.data)
+            received += len(dl.data)
+            # FIXME: This may need delays for slow loading data!
+            if verbose:
+                print(f"\rDownload: got {received}/{size} bytes", flush=True, end='')
+        if verbose:
+            print()
+        return b''.join(data)[:size]
     def gethardwareinfo(self):
         data = self.download('hardware_info')
         return HardwareInfo(data)
