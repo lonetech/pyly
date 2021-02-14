@@ -102,7 +102,7 @@ class LytroSetTime(LytroPacket):
     flags = 0
     command = 0xc0
     params = (4,)
-    paramsstruct = "B13x",
+    paramsstruct = ("B13x",)
     def __init__(self, time):
         time = time.astimezone(datetime.timezone.utc)
         self.payload = struct.pack('<7H',
@@ -173,10 +173,12 @@ class PictureRecord:
         self.datetime       = dateutil.parser.isoparse(f[7].rstrip(b'\0').decode('ascii'))
         self.rotation       = {1:0, 8:90, 3:180, 6:270}[f[8]]
         #print(self.__dict__)
-    def pathname(self, extension=b"RAW"):
+    def pathname(self, extension="RAW"):
         "Return an internal filename in Lytro F01, usable with file download. Not needed since picture download works with id (hash)."
         # Basic problem: formatting is for strings, and we have a lot of bytes. Simple solution: decode and encode. 
         return rf"I:\DCIM\{self.folder:03}{self.folderpostfix}\{self.filenameprefix}{self.file:04}.{extension}"
+    def __str__(self):
+        return f"{self.pathname()} {self.starred=} {self.id} {self.rotation=} {self.datetime}"
 class PictureList(list):
     downloadtype='picture_list'
     def __init__(self, b):
@@ -238,35 +240,33 @@ class Lytro:
         data = self.download('picture_list')
         return PictureList(data)
 
-def connect(verbose=True):
+def probe(verbose=True):
     import traceback
-    target: Optional[lytro.Target] = None
 
     try:
-        if not target:
-            import comm_sg
-            for dev in comm_sg.probe():
-                if verbose: print(f"Opening SCSI device {dev}")
-                target = comm_sg.ScsiTarget(dev)
-    except:
+        import comm_sg
+        for dev in comm_sg.probe():
+            if verbose: print(f"Opening SCSI device {dev}")
+            yield comm_sg.ScsiTarget(dev)
+    except (ImportError, IOError):
         traceback.print_exc()
 
     try:
-        if not target:
-            import comm_usb
-            for dev in comm_usb.probe():
-                if verbose: print(f"Opening USB device {dev}")
-                target = comm_usb.UsbTarget(dev)
-    except:
+        import comm_usb
+        for dev in comm_usb.probe():
+            if verbose: print(f"Opening USB device {dev!r}")
+            yield comm_usb.UsbTarget(dev)
+    except (ImportError, IOError):
         traceback.print_exc()
 
     try:
-        if not target:
-            import comm_ip
-            for addr in comm_ip.probe():
-                if verbose: print(f"Connecting to IP device {addr}")
-                target = comm_ip.IpTarget(addr)
-    except:
+        import comm_ip
+        for addr in comm_ip.probe():
+            if verbose: print(f"Connecting to IP device {addr}")
+            yield comm_ip.IpTarget(addr)
+    except (ImportError, IOError):
         traceback.print_exc()
 
+def connect(verbose=True):
+    target = next(probe(verbose=verbose))
     return Lytro(target)

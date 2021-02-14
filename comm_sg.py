@@ -1,8 +1,9 @@
 #! /usr/bin/env python
 
-# Note: CAP_SYS_RAWIO is required to run the vendor specific SCSI commands.
-# This basically means this module requires root.
-# TODO: Find a neat way to request root or the capability. 
+# Module does not require root, merely the SG module to be loaded.
+# The Lytro presents itself as a CD-ROM so being in the cdrom group is enough.
+# However, this isn't perfectly stable yet; attempting a download (e.g. list pictures)
+# sometimes causes the camera to crash and restart. Usually works after that, though. 
 
 import glob, posix, fcntl, struct
 from ctypes import *
@@ -42,7 +43,9 @@ SG_DXFER_FROM_DEV = -3
 
 class ScsiTarget(lytro.Target):
     def __init__(self, name):
-        self.fd = posix.open(name, posix.O_RDWR)
+        if not name.startswith('sg:'):
+            raise ValueError(f"Not a SG target: {name}")
+        self.fd = posix.open(name[3:], posix.O_RDWR)
     def read(self, command, size):
         # Lytro can produce 32KiB per transfer (SG allows 64)
         sizelimit = 1<<15
@@ -72,7 +75,7 @@ def probe():
     import pathlib
     for path in glob.glob('/sys/class/scsi_generic/sg?/device/vendor'):
         if open(path).read() == 'Lytro   \n':
-            yield "/dev/"+pathlib.Path(path).parts[-3]
+            yield "sg:/dev/"+pathlib.Path(path).parts[-3]
     # CD-ROM device works for battery status, but not downloads
     #return glob.glob('/dev/disk/by-id/usb-Lytro*')
 

@@ -10,9 +10,9 @@ magic = 0xfaaa55af
 Response = namedtuple('Response', ['magic', 'size', 'seq', 'command'])
 
 class IpTarget(lytro.Target):
-    def __init__(self, address):
-        self.s = socket.create_connection(address)
-        self.s.settimeout(5)
+    def __init__(self, address, timeout=1):
+        self.s = socket.create_connection(address, timeout)
+        self.s.settimeout(timeout)
     def read(self, command, size):
         prefix=struct.pack(b'<3I', magic, size, 1)
         self.s.send(prefix+command)
@@ -36,5 +36,5 @@ class IpTarget(lytro.Target):
         return response[3*4+len(command):]
 
 def probe():
-    # TODO: Check if it's actually there?
+    # TODO: Check if it's actually there? DNS-SD should be used. 
     return [("10.100.1.1", 5678)]
