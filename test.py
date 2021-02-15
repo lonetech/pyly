@@ -24,6 +24,12 @@ def main():
                         help='Output filename')
     parser.add_argument('--download-file',
                         help='Download file')
+    downloadtypes = list(lytro.loadtypes.keys())
+    downloadtypes.remove('picture')
+    downloadtypes.extend(lytro.picturesubtypes)
+    parser.add_argument('--download-type', '-t',
+                        choices=downloadtypes, default='file',
+                        help='Type of download to perform')
     
     args = parser.parse_args()
 
@@ -51,9 +57,16 @@ def main():
         for picture in dev.getpicturelist():
             print(picture)
     
-    if args.download_file:
+    if args.output:
         with args.output as f:
-            f.write(dev.download('file', args.download_file))
+            if args.download_type in lytro.picturesubtypes:
+                dt = 'picture'
+                subtype = args.download_type
+            else:
+                dt = args.download_type
+                subtype = None
+            data = dev.download(dt, args.download_file, subtype=subtype)
+            f.write(data)
 
     return
 

@@ -1,16 +1,19 @@
 import datetime
 import dateutil.parser
 import struct
+import time
 
 # Protocol references:
 #  http://optics.miloush.net/lytro/TheProtocols.Commands.aspx
 #  https://ljirkovsky.wordpress.com/2015/03/16/lytro-protocol/
 
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, Callable, Any
 
 # Abstract base class for communication modes
 class Target:
     pass
+
+# TODO: Clean ups; separate query and response, perhaps add response queue per connection
 
 # Download IDs
 loadtypes = {
@@ -24,28 +27,28 @@ loadtypes = {
 picturesubtypes = 'jpg,raw,txt,128,stk'.split(',')
 
 class LytroPacket(object):
-    headerstruct="<IIIH" # Magic, content length, flags, command
-    paramsstruct="14x"
+    paramsstruct="15x"
     params=()
-    magic=0xfaaa55af
     length=0
-    flags=0
     payload=b''
     def send(self, s):
-        packet=struct.pack('Bx'+self.paramsstruct, self.command, *self.params)
-        if not self.flags&1:
+        assert struct.calcsize('<'+self.paramsstruct)==15, f"Bad length: {self.paramsstruct=}"
+        packet=struct.pack('<B'+self.paramsstruct, self.command, *self.params)
+        assert len(packet)==16, (struct.calcsize('<B'+self.paramsstruct), struct.calcsize('<'+self.paramsstruct), self.paramsstruct)
+        if self.payload:
             data=self.payload.ljust(self.length,b'\0')
             #print(f"Write command: {packet!r} {data!r}")
             s.write(packet, data)
         else:
-            #print("Read command: {packet!r} {self.length}")
+            #print(f"Read command: {packet!r} {self.length}")
             response=s.read(packet, self.length)
             if self.length and response:
                 # Handle incoming data
-                return self.read(self.command, packet[2:], response)
+                return self.read(self.command, packet[1:], response)
         return None
     @classmethod
     def read(self, command, params, payload):
+        assert struct.calcsize('<'+self.paramsstruct)==15
         try:
             return LytroResponses[command](params,payload)
         except KeyError:
@@ -53,9 +56,8 @@ class LytroPacket(object):
 
 LytroQueries = {}
 class LytroQuery(LytroPacket):
-    flags=1
     command=0xc6
-    paramsstruct="B13x"
+    paramsstruct="xB13x"
     def unpack(self):
         return struct.unpack(self.payloadstruct, self.payload)
     @classmethod
@@ -99,10 +101,9 @@ LytroQueries[LytroQuerySize.query] = LytroQuerySize
 
 class LytroSetTime(LytroPacket):
     # FIXME does not yet work. On the plus side, doesn't crash camera either.
-    flags = 0
     command = 0xc0
     params = (4,)
-    paramsstruct = ("B13x",)
+    paramsstruct = ("xB13x",)
     def __init__(self, time):
         time = time.astimezone(datetime.timezone.utc)
         self.payload = struct.pack('<7H',
@@ -114,7 +115,7 @@ LytroResponses: Dict[int, Callable[[Any, bytes], Any]] = {}
 LytroResponses[LytroQuery.command]=LytroQuery.response
 class LytroLoad(LytroPacket):
     command=0xc2
-    paramsstruct="B13x"
+    paramsstruct="xB13x"
     def __init__(self, sort, path=None):
         assert sort in loadtypes.values()
         # pictures should be suffixed with a format digit: jpg,raw,txt,128,stk
@@ -125,10 +126,10 @@ class LytroLoad(LytroPacket):
 
 class LytroDownload(LytroPacket):
     # TODO: Figure out why this fails over SCSI transport. 
-    flags=1
     command=0xc4
-    paramsstruct="BI8x"
+    paramsstruct="xBI9x"
     def __init__(self, length):
+        #print(f"{struct.calcsize('<'+self.paramsstruct)=}")
         self.params=[1,0]
         self.data=b""
         self.length = length
@@ -140,14 +141,18 @@ class LytroDownload(LytroPacket):
         self.params[1]=offset
     def send(self,s):
         LytroResponses[self.command]=self.receiveddata
+        self.data = b""
         ret=super(LytroDownload,self).send(s)
         # Note: Increasing offset at send time is only helpful for pipelining.
         # If we do it in receiveddata, that provides a simple feedback for MTU. 
         #self.offset+=self.xferlength
         return ret
     def receiveddata(self, params, payload):
+        #print(f"{params=}")
         self.data = payload
         self.offset += len(payload)
+        #time.sleep(0.05)
+        #self.params[0]^=1
         #print(f"Got {len(payload)} bytes: {payload!r}")
 
 # Hardware info
@@ -224,14 +229,21 @@ class Lytro:
             dl.offset = received
             dl.send(self.comm)
 
+            if not dl.data:
+                continue
             assert len(dl.data)>0
             data.append(dl.data)
             received += len(dl.data)
+            #dl.params[0] ^= 1
             # FIXME: This may need delays for slow loading data!
             if verbose:
                 print(f"\rDownload: got {received}/{size} bytes", flush=True, end='')
         if verbose:
             print()
+        # Future improvement: Download must check which block is actually returned,
+        # and could write in correct position using buffer memoryviews.
+        # PyUSB accepts memoryviews for read. SG accepts a pointer, so memoryview is OK.
+        # sockets have recv_into. 
         return b''.join(data)[:size]
     def gethardwareinfo(self):
         data = self.download('hardware_info')

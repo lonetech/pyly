@@ -18,10 +18,10 @@ class UsbTarget(lytro.Target):
         self.handle = dev
         # TODO: parse configuration for endpoints?
         # Verify that it is in fact the correct protocol?
-#         try:
-#             self.handle.detach_kernel_driver(0)
-#         except usb.USBError:
-#             pass
+        try:
+            self.handle.detach_kernel_driver(0)
+        except usb.USBError:
+            pass
 #        self.handle.claim_interface(0)
         self.epout = 2
         self.epin = 0x82

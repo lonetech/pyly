@@ -1,3 +1,5 @@
+#! /usr/bin/env python3
+
 import numpy as np
 from PIL import Image
 
@@ -17,7 +19,7 @@ def load_raw(f, w=3280, h=3280):
     a = np.zeros((h//2,w//2,3))
     a[:,:,:]=168  # black level
     a[:,:,0] = r
-    a[:,:,1] = (g0+g1)/2
+    a[:,:,1] = (g0+g1)/2   # Average since we have more green photosites
     a[:,:,2] = b
     # Rescale a to 0..1 levels (Metadata: pixelFormat)
     a = (a-168)/(4095-168)
@@ -34,6 +36,10 @@ def load_raw(f, w=3280, h=3280):
     img = Image.frombytes('RGB', (w//2,h//2), (a*255).astype('B').tobytes())
     
     return img
+
+# Rendering thoughts: use scipy or ndsplines for interpolation?
+# Can both trace rays to specific depth for focusing, or do full 4D
+# interpolation for lightfield conversion. 
 
 if __name__=='__main__':
     from sys import argv

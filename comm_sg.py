@@ -5,7 +5,7 @@
 # However, this isn't perfectly stable yet; attempting a download (e.g. list pictures)
 # sometimes causes the camera to crash and restart. Usually works after that, though. 
 
-import glob, posix, fcntl, struct
+import glob, posix, fcntl, struct, time
 from ctypes import *
 import lytro
 
@@ -41,6 +41,20 @@ SG_DXFER_NONE = -1
 SG_DXFER_TO_DEV = -2
 SG_DXFER_FROM_DEV = -3
 
+class sensebuffer(Structure):
+    "SCSI sense data"
+    _fields_ = [
+        ('response_code',         c_ubyte),
+        ('sense_key',             c_ubyte),
+        ('additional_sense_code', c_ubyte),
+        ('additional_sense_qualifier', c_ubyte),
+        ('_reserved0', 3*c_ubyte),
+        ('additional_sense_length', c_ubyte),
+        # ... sense data descriptors
+    ]
+    def __str__(self):
+        return str({a: getattr(self, a) for a in dir(self) if not a.startswith('_')})
+
 class ScsiTarget(lytro.Target):
     def __init__(self, name):
         if not name.startswith('sg:'):
@@ -52,21 +66,29 @@ class ScsiTarget(lytro.Target):
         if size > sizelimit:
             size = sizelimit
         buf = create_string_buffer(size)
-        hdr = sg_io_hdr(interface_id=ord('S'), timeout=1000,
-                        cmdp=command, cmd_len=len(command),
-                        mx_sb_len=0, #sbp=,
-                        dxfer_direction=SG_DXFER_FROM_DEV,
-                        dxferp=cast(pointer(buf), c_void_p), dxfer_len=size)
-        result = fcntl.ioctl(self.fd, SG_IO, hdr)
-        assert result==0
+        for n in range(10):
+            sb = sensebuffer()
+            hdr = sg_io_hdr(interface_id=ord('S'), timeout=1000,
+                            cmdp=command, cmd_len=len(command),
+                            mx_sb_len=sizeof(sb), sbp=cast(pointer(sb), POINTER(c_ubyte)),
+                            dxfer_direction=SG_DXFER_FROM_DEV,
+                            dxferp=cast(pointer(buf), c_void_p), dxfer_len=size)
+            result = fcntl.ioctl(self.fd, SG_IO, hdr)
+            assert result==0
+            if sb.response_code==0:
+                break
+            time.sleep(0.05)
         # FIXME: nothing is read? our buffer seems to hold only nul
         # It works fine for the time, battery and size commands
+        #print(sb)
+        #print(repr(buf.raw[:16]))
         return buf.raw[:size-hdr.resid]
     def write(self, command, data):
         data = create_string_buffer(data)
+        sb = sensebuffer()
         hdr = sg_io_hdr(interface_id=ord('S'), timeout=1000,
                         cmdp=command, cmd_len=len(command),
-                        mx_sb_len=0, #sbp=cast(pointer(self.sb), POINTER(c_ubyte)),
+                        mx_sb_len=0, #sbp=cast(pointer(sb), POINTER(c_ubyte)),
                         dxfer_direction=SG_DXFER_TO_DEV,
                         dxferp=cast(pointer(data), c_void_p), dxfer_len=len(data))
         fcntl.ioctl(self.fd, SG_IO, hdr)
